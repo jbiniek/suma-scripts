@@ -3,19 +3,20 @@ import csv
 import json
 import urllib3
 
+from xmlrpc.client import ServerProxy
+import ssl
 # Suppress warnings for unverified HTTPS requests
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Constants
-SUMA_URL = "https://suma42.demo.suse/rpc/api"
-USERNAME = "jbiniek"
-PASSWORD = "fake-pass"
+SUMA_URL = "https://suma-server-address.com/rpc/api"
+USERNAME = "user"
+PASSWORD = "pass"
 
-def post_with_error_handling(url, payload):
-    response = client.post(url, json=payload, verify=False)
+def post_with_error_handling(method, payload):
+    response = getattr(client, method)(*payload)
     try:
-        response.raise_for_status()  # Check if the response contains an HTTP error status code.
-        return response.json()
+        return response
     except requests.HTTPError:
         print(f"HTTP Error {response.status_code}: {response.text}")
         return None
@@ -24,11 +25,10 @@ def post_with_error_handling(url, payload):
         return None
 
 # Connect and get session key
-client = requests.Session()
-key = post_with_error_handling(SUMA_URL, {
-    'methodName': 'auth.login',
-    'params': [USERNAME, PASSWORD]
-})
+context = ssl._create_unverified_context()
+client = ServerProxy(SUMA_URL, context=context)
+
+key = post_with_error_handling('auth.login', [USERNAME, PASSWORD])
 
 if not key:
     print("Failed to obtain session key. Exiting.")
@@ -36,13 +36,11 @@ if not key:
 
 # Helper function to make further API calls
 def call_suma_api(method, *params):
-    return post_with_error_handling(SUMA_URL, {
-        'methodName': method,
-        'params': [key] + list(params)
-    })
+    return post_with_error_handling(method, [key] + list(params))
 
 # Fetch all systems
 systems = call_suma_api('system.listSystems')
+print(systems)
 
 if not systems:
     print("Failed to fetch systems. Exiting.")
@@ -51,6 +49,7 @@ if not systems:
 report = []
 
 for system in systems:
+    print(system["name"])
     system_id = system['id']
     hostname = system['name']
 
@@ -71,7 +70,7 @@ for system in systems:
         currency_percentage = len(security_patches) / (len(security_patches) + len(packages_installed))
     else:
         currency_percentage = 0
-    
+
     report.append({
         'Hostname': hostname,
         'Security Patches Available': len(security_patches),
@@ -83,7 +82,7 @@ for system in systems:
 with open('suma_report.csv', 'w', newline='') as csvfile:
     fieldnames = ['Hostname', 'Security Patches Available', 'Packets Installed', 'Currency Percentage']
     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-    
+
     writer.writeheader()
     for entry in report:
         writer.writerow(entry)
